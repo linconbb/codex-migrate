@@ -674,7 +674,9 @@ impl MigrationApp {
         let source = PathBuf::from(self.export_source.trim());
         self.start_task(move |sender| {
             let result = operations::scan_source(&source).map_err(display_error);
-            let _ = sender.send(TaskEvent::Complete(Box::new(TaskResult::ExportScan(result))));
+            let _ = sender.send(TaskEvent::Complete(Box::new(TaskResult::ExportScan(
+                result,
+            ))));
         });
     }
 
@@ -1669,12 +1671,8 @@ impl MigrationApp {
                     self.scan_export();
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if primary_action(
-                        ui,
-                        tr(zh, "导出完整备份", "Export full backup"),
-                        !self.busy,
-                    )
-                    .clicked()
+                    if primary_action(ui, tr(zh, "导出完整备份", "Export full backup"), !self.busy)
+                        .clicked()
                     {
                         self.export();
                     }
