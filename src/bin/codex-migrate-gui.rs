@@ -4,8 +4,8 @@
 )]
 
 use codex_migrate::model::{
-    DiagnosticReport, ImportOptions, ImportPlan, MergeAction, SourceCatalog, SourceProject,
-    SourceSession,
+    DiagnosticReport, ImportOptions, ImportPlan, MergeAction, SessionMessage, SourceCatalog,
+    SourceProject, SourceSession,
 };
 use codex_migrate::operations::{
     self, ExportSummary, ImportSummary, TransactionSummary, VerificationReport,
@@ -114,6 +114,12 @@ struct UiProject {
     sessions: Vec<UiSession>,
 }
 
+#[derive(Clone)]
+struct SessionPreview {
+    session: SourceSession,
+    messages: Vec<SessionMessage>,
+}
+
 struct ConfirmationSpec<'a> {
     title: &'a str,
     message: &'a str,
@@ -174,6 +180,7 @@ enum TaskResult {
     RepairScan(Result<SourceCatalog, String>),
     HtmlScan(Result<SourceCatalog, String>),
     ExportScan(Result<SourceCatalog, String>),
+    SessionPreview(Result<SessionPreview, String>),
     Plan(Result<ImportPlan, String>),
     Import(Result<ImportSummary, String>),
     Rebind(Result<ImportSummary, String>),
@@ -200,6 +207,8 @@ struct MigrationApp {
     export_projects: Vec<UiProject>,
     html_export_folder: String,
     show_all_repair_projects: bool,
+    show_internal_export_sessions: bool,
+    session_preview: Option<SessionPreview>,
     parent_source: String,
     parent_target: String,
     plan: Option<ImportPlan>,
@@ -255,6 +264,8 @@ impl MigrationApp {
             export_projects: Vec::new(),
             html_export_folder: String::new(),
             show_all_repair_projects: false,
+            show_internal_export_sessions: false,
+            session_preview: None,
             parent_source: String::new(),
             parent_target: String::new(),
             plan: None,
@@ -393,6 +404,21 @@ impl MigrationApp {
                         catalog.thread_count,
                         tr(zh, "个本机会话", "local sessions")
                     );
+                }
+                Err(error) => self.fail(error),
+            },
+            TaskResult::SessionPreview(result) => match result {
+                Ok(preview) => {
+                    self.status = format!(
+                        "{}: {}",
+                        tr(zh, "会话预览已加载", "Session preview loaded"),
+                        if preview.session.thread.title.is_empty() {
+                            &preview.session.thread.id
+                        } else {
+                            &preview.session.thread.title
+                        }
+                    );
+                    self.session_preview = Some(preview);
                 }
                 Err(error) => self.fail(error),
             },
@@ -680,10 +706,29 @@ impl MigrationApp {
         });
     }
 
+    fn load_session_preview(&mut self, session: SourceSession) {
+        let path = PathBuf::from(&session.source_path);
+        let zh = self.chinese();
+        self.start_task(move |sender| {
+            let _ = sender.send(TaskEvent::Progress(
+                tr(zh, "正在读取完整会话…", "Loading full session transcript…").to_owned(),
+            ));
+            let result = operations::load_session_messages(&path)
+                .map(|messages| SessionPreview { session, messages })
+                .map_err(display_error);
+            let _ = sender.send(TaskEvent::Complete(Box::new(TaskResult::SessionPreview(
+                result,
+            ))));
+        });
+    }
+
     fn export_selected_backup(&mut self) {
         let source = PathBuf::from(self.export_source.trim());
         let parent = PathBuf::from(self.export_parent.trim());
-        let selected = selected_ids(&self.export_projects);
+        let selected = selected_export_ids(
+            &self.export_projects,
+            self.show_internal_export_sessions,
+        );
         self.start_task(move |sender| {
             let progress_sender = sender.clone();
             let result = operations::export_selected_directory(
@@ -2427,6 +2472,11 @@ impl eframe::App for MigrationApp {
                 }
             });
         self.confirmation_windows(context);
+        if let Some(preview) = self.session_preview.clone() {
+            if session_preview_window(context, &preview, self.chinese()) {
+                self.session_preview = None;
+            }
+        }
     }
 }
 
