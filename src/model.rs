@@ -46,7 +46,10 @@ impl ThreadRecord {
         }
 
         let source = self.source.trim();
-        if matches!(source.to_ascii_lowercase().as_str(), "subagent" | "internal") {
+        if matches!(
+            source.to_ascii_lowercase().as_str(),
+            "subagent" | "internal"
+        ) {
             return true;
         }
 
@@ -195,10 +198,11 @@ mod thread_record_tests {
 
     #[test]
     fn identifies_guardian_and_other_subagent_threads() {
-        assert!(record(r#"{"subagent":{"other":"guardian"}}"#, Some("subagent"))
-            .is_internal_or_subagent());
-        assert!(record(r#"{"subagent":{"thread_spawn":"worker"}}"#, None)
-            .is_internal_or_subagent());
+        assert!(
+            record(r#"{"subagent":{"other":"guardian"}}"#, Some("subagent"))
+                .is_internal_or_subagent()
+        );
+        assert!(record(r#"{"subagent":{"thread_spawn":"worker"}}"#, None).is_internal_or_subagent());
         assert!(record(r#"{"internal":"guardian"}"#, None).is_internal_or_subagent());
     }
 
