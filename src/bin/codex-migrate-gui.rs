@@ -725,10 +725,8 @@ impl MigrationApp {
     fn export_selected_backup(&mut self) {
         let source = PathBuf::from(self.export_source.trim());
         let parent = PathBuf::from(self.export_parent.trim());
-        let selected = selected_export_ids(
-            &self.export_projects,
-            self.show_internal_export_sessions,
-        );
+        let selected =
+            selected_export_ids(&self.export_projects, self.show_internal_export_sessions);
         self.start_task(move |sender| {
             let progress_sender = sender.clone();
             let result = operations::export_selected_directory(
@@ -1788,10 +1786,8 @@ impl MigrationApp {
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     for project in &mut self.export_projects {
-                        if export_project_visible_count(
-                            project,
-                            self.show_internal_export_sessions,
-                        ) == 0
+                        if export_project_visible_count(project, self.show_internal_export_sessions)
+                            == 0
                         {
                             continue;
                         }
@@ -1814,11 +1810,9 @@ impl MigrationApp {
 
             ui.add_space(8.0);
             card(ui, |ui| {
-                let selected = selected_export_ids(
-                    &self.export_projects,
-                    self.show_internal_export_sessions,
-                )
-                .len();
+                let selected =
+                    selected_export_ids(&self.export_projects, self.show_internal_export_sessions)
+                        .len();
                 ui.horizontal(|ui| {
                     ui.label(format!(
                         "{} {}",
@@ -2622,11 +2616,7 @@ fn set_export_project_selected(project: &mut UiProject, show_internal: bool, sel
     }
 }
 
-fn set_export_projects_selected(
-    projects: &mut [UiProject],
-    show_internal: bool,
-    selected: bool,
-) {
+fn set_export_projects_selected(projects: &mut [UiProject], show_internal: bool, selected: bool) {
     for project in projects {
         set_export_project_selected(project, show_internal, selected);
     }
@@ -2948,11 +2938,7 @@ fn session_selection_card(ui: &mut egui::Ui, project: &mut UiProject, zh: bool) 
         });
 }
 
-fn session_preview_window(
-    context: &egui::Context,
-    preview: &SessionPreview,
-    zh: bool,
-) -> bool {
+fn session_preview_window(context: &egui::Context, preview: &SessionPreview, zh: bool) -> bool {
     let mut open = true;
     let mut close_clicked = false;
     let title = if preview.session.thread.title.is_empty() {
@@ -3031,14 +3017,10 @@ fn session_preview_window(
             );
             if preview.session.thread.is_internal_or_subagent() {
                 ui.label(
-                    RichText::new(tr(
-                        zh,
-                        "内部/子代理会话",
-                        "Internal/subagent session",
-                    ))
-                    .size(12.0)
-                    .strong()
-                    .color(WARNING),
+                    RichText::new(tr(zh, "内部/子代理会话", "Internal/subagent session"))
+                        .size(12.0)
+                        .strong()
+                        .color(WARNING),
                 );
             }
         });
@@ -3082,12 +3064,7 @@ fn session_preview_window(
                         .inner_margin(Margin::symmetric(12, 9))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                ui.label(
-                                    RichText::new(role_label)
-                                        .size(12.0)
-                                        .strong()
-                                        .color(TEXT),
-                                );
+                                ui.label(RichText::new(role_label).size(12.0).strong().color(TEXT));
                                 if let Some(timestamp) = message.timestamp {
                                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                         ui.label(
