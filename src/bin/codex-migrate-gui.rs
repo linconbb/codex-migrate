@@ -4,8 +4,8 @@
 )]
 
 use codex_migrate::model::{
-    DiagnosticReport, ImportOptions, ImportPlan, MergeAction, SourceCatalog, SourceProject,
-    SourceSession,
+    DiagnosticReport, ImportOptions, ImportPlan, MergeAction, SessionMessage, SourceCatalog,
+    SourceProject, SourceSession,
 };
 use codex_migrate::operations::{
     self, ExportSummary, ImportSummary, TransactionSummary, VerificationReport,
@@ -114,6 +114,12 @@ struct UiProject {
     sessions: Vec<UiSession>,
 }
 
+#[derive(Clone)]
+struct SessionPreview {
+    session: SourceSession,
+    messages: Vec<SessionMessage>,
+}
+
 struct ConfirmationSpec<'a> {
     title: &'a str,
     message: &'a str,
@@ -174,6 +180,7 @@ enum TaskResult {
     RepairScan(Result<SourceCatalog, String>),
     HtmlScan(Result<SourceCatalog, String>),
     ExportScan(Result<SourceCatalog, String>),
+    SessionPreview(Result<SessionPreview, String>),
     Plan(Result<ImportPlan, String>),
     Import(Result<ImportSummary, String>),
     Rebind(Result<ImportSummary, String>),
@@ -200,6 +207,8 @@ struct MigrationApp {
     export_projects: Vec<UiProject>,
     html_export_folder: String,
     show_all_repair_projects: bool,
+    show_internal_export_sessions: bool,
+    session_preview: Option<SessionPreview>,
     parent_source: String,
     parent_target: String,
     plan: Option<ImportPlan>,
@@ -255,6 +264,8 @@ impl MigrationApp {
             export_projects: Vec::new(),
             html_export_folder: String::new(),
             show_all_repair_projects: false,
+            show_internal_export_sessions: false,
+            session_preview: None,
             parent_source: String::new(),
             parent_target: String::new(),
             plan: None,
@@ -393,6 +404,21 @@ impl MigrationApp {
                         catalog.thread_count,
                         tr(zh, "个本机会话", "local sessions")
                     );
+                }
+                Err(error) => self.fail(error),
+            },
+            TaskResult::SessionPreview(result) => match result {
+                Ok(preview) => {
+                    self.status = format!(
+                        "{}: {}",
+                        tr(zh, "会话预览已加载", "Session preview loaded"),
+                        if preview.session.thread.title.is_empty() {
+                            &preview.session.thread.id
+                        } else {
+                            &preview.session.thread.title
+                        }
+                    );
+                    self.session_preview = Some(preview);
                 }
                 Err(error) => self.fail(error),
             },
@@ -680,10 +706,27 @@ impl MigrationApp {
         });
     }
 
+    fn load_session_preview(&mut self, session: SourceSession) {
+        let path = PathBuf::from(&session.source_path);
+        let zh = self.chinese();
+        self.start_task(move |sender| {
+            let _ = sender.send(TaskEvent::Progress(
+                tr(zh, "正在读取完整会话…", "Loading full session transcript…").to_owned(),
+            ));
+            let result = operations::load_session_messages(&path)
+                .map(|messages| SessionPreview { session, messages })
+                .map_err(display_error);
+            let _ = sender.send(TaskEvent::Complete(Box::new(TaskResult::SessionPreview(
+                result,
+            ))));
+        });
+    }
+
     fn export_selected_backup(&mut self) {
         let source = PathBuf::from(self.export_source.trim());
         let parent = PathBuf::from(self.export_parent.trim());
-        let selected = selected_ids(&self.export_projects);
+        let selected =
+            selected_export_ids(&self.export_projects, self.show_internal_export_sessions);
         self.start_task(move |sender| {
             let progress_sender = sender.clone();
             let result = operations::export_selected_directory(
@@ -1692,36 +1735,84 @@ impl MigrationApp {
 
         if !self.export_projects.is_empty() {
             ui.add_space(12.0);
-            let state = projects_selection_state(&self.export_projects);
-            ui.horizontal(|ui| {
+            let state = export_projects_selection_state(
+                &self.export_projects,
+                self.show_internal_export_sessions,
+            );
+            let internal_count = internal_session_count(&self.export_projects);
+            ui.horizontal_wrapped(|ui| {
                 if selection_control(ui, state, tr(zh, "全部选择", "Select all")).clicked() {
-                    set_projects_selected(&mut self.export_projects, state != CheckState::All);
+                    set_export_projects_selected(
+                        &mut self.export_projects,
+                        self.show_internal_export_sessions,
+                        state != CheckState::All,
+                    );
                 }
+
+                if internal_count > 0 {
+                    let response = ui.checkbox(
+                        &mut self.show_internal_export_sessions,
+                        format!(
+                            "{} ({internal_count})",
+                            tr(
+                                zh,
+                                "显示内部/子代理会话",
+                                "Show internal/subagent sessions",
+                            )
+                        ),
+                    );
+                    if response.changed() && !self.show_internal_export_sessions {
+                        set_internal_sessions_selected(&mut self.export_projects, false);
+                    }
+                }
+
                 ui.label(
                     RichText::new(tr(
                         zh,
-                        "选择性备份仅包含所选会话的 rollout 文件，不复制全局数据库、日志和配置。",
-                        "Selective backup contains only the selected session rollout files, not global databases, logs, or configuration.",
+                        "默认隐藏 Guardian 等内部子代理；点击“预览”可在导出前查看完整会话。",
+                        "Guardian and other internal subagents are hidden by default; use Preview to inspect the full transcript before exporting.",
                     ))
                     .size(12.0)
                     .color(MUTED),
                 );
             });
             ui.add_space(8.0);
+
+            let mut preview_request = None;
             egui::ScrollArea::vertical()
                 .id_salt("backup_session_list")
-                .max_height(360.0)
+                .max_height(430.0)
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     for project in &mut self.export_projects {
-                        session_selection_card(ui, project, zh);
+                        if export_project_visible_count(project, self.show_internal_export_sessions)
+                            == 0
+                        {
+                            continue;
+                        }
+                        if let Some(session) = export_session_selection_card(
+                            ui,
+                            project,
+                            zh,
+                            self.show_internal_export_sessions,
+                            self.busy,
+                        ) {
+                            preview_request = Some(session);
+                        }
                         ui.add_space(8.0);
                     }
                 });
+
+            if let Some(session) = preview_request {
+                self.load_session_preview(session);
+            }
+
             ui.add_space(8.0);
             card(ui, |ui| {
-                let selected = selected_ids(&self.export_projects).len();
+                let selected =
+                    selected_export_ids(&self.export_projects, self.show_internal_export_sessions)
+                        .len();
                 ui.horizontal(|ui| {
                     ui.label(format!(
                         "{} {}",
@@ -2427,6 +2518,11 @@ impl eframe::App for MigrationApp {
                 }
             });
         self.confirmation_windows(context);
+        if let Some(preview) = self.session_preview.clone() {
+            if session_preview_window(context, &preview, self.chinese()) {
+                self.session_preview = None;
+            }
+        }
     }
 }
 
@@ -2455,6 +2551,93 @@ fn selected_ids(projects: &[UiProject]) -> BTreeSet<String> {
         .filter(|session| session.selected)
         .map(|session| session.source.thread.id.clone())
         .collect()
+}
+
+fn export_session_visible(session: &UiSession, show_internal: bool) -> bool {
+    show_internal || !session.source.thread.is_internal_or_subagent()
+}
+
+fn selected_export_ids(projects: &[UiProject], show_internal: bool) -> BTreeSet<String> {
+    projects
+        .iter()
+        .flat_map(|project| project.sessions.iter())
+        .filter(|session| session.selected && export_session_visible(session, show_internal))
+        .map(|session| session.source.thread.id.clone())
+        .collect()
+}
+
+fn export_project_visible_count(project: &UiProject, show_internal: bool) -> usize {
+    project
+        .sessions
+        .iter()
+        .filter(|session| export_session_visible(session, show_internal))
+        .count()
+}
+
+fn export_project_selected_count(project: &UiProject, show_internal: bool) -> usize {
+    project
+        .sessions
+        .iter()
+        .filter(|session| session.selected && export_session_visible(session, show_internal))
+        .count()
+}
+
+fn export_project_selection_state(project: &UiProject, show_internal: bool) -> CheckState {
+    let selected = export_project_selected_count(project, show_internal);
+    let total = export_project_visible_count(project, show_internal);
+    match selected {
+        0 => CheckState::None,
+        value if value == total && total > 0 => CheckState::All,
+        _ => CheckState::Partial,
+    }
+}
+
+fn export_projects_selection_state(projects: &[UiProject], show_internal: bool) -> CheckState {
+    let selected = projects
+        .iter()
+        .map(|project| export_project_selected_count(project, show_internal))
+        .sum::<usize>();
+    let total = projects
+        .iter()
+        .map(|project| export_project_visible_count(project, show_internal))
+        .sum::<usize>();
+    match selected {
+        0 => CheckState::None,
+        value if value == total && total > 0 => CheckState::All,
+        _ => CheckState::Partial,
+    }
+}
+
+fn set_export_project_selected(project: &mut UiProject, show_internal: bool, selected: bool) {
+    for session in &mut project.sessions {
+        if export_session_visible(session, show_internal) {
+            session.selected = selected;
+        }
+    }
+}
+
+fn set_export_projects_selected(projects: &mut [UiProject], show_internal: bool, selected: bool) {
+    for project in projects {
+        set_export_project_selected(project, show_internal, selected);
+    }
+}
+
+fn set_internal_sessions_selected(projects: &mut [UiProject], selected: bool) {
+    for project in projects {
+        for session in &mut project.sessions {
+            if session.source.thread.is_internal_or_subagent() {
+                session.selected = selected;
+            }
+        }
+    }
+}
+
+fn internal_session_count(projects: &[UiProject]) -> usize {
+    projects
+        .iter()
+        .flat_map(|project| project.sessions.iter())
+        .filter(|session| session.source.thread.is_internal_or_subagent())
+        .count()
 }
 
 fn projects_selection_state(projects: &[UiProject]) -> CheckState {
@@ -2601,6 +2784,110 @@ fn repair_project_row(ui: &mut egui::Ui, project: &mut UiProject, zh: bool) {
         });
 }
 
+fn export_session_selection_card(
+    ui: &mut egui::Ui,
+    project: &mut UiProject,
+    zh: bool,
+    show_internal: bool,
+    busy: bool,
+) -> Option<SourceSession> {
+    let mut preview = None;
+    egui::Frame::new()
+        .fill(SURFACE)
+        .stroke(Stroke::new(1.0_f32, BORDER))
+        .corner_radius(9.0)
+        .inner_margin(Margin::symmetric(14, 11))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                let state = export_project_selection_state(project, show_internal);
+                if selection_control(ui, state, "").clicked() {
+                    set_export_project_selected(project, show_internal, state != CheckState::All);
+                }
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(&project.original_cwd)
+                            .size(14.0)
+                            .strong()
+                            .color(TEXT),
+                    )
+                    .truncate(),
+                );
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(format!(
+                        "{} / {}",
+                        export_project_selected_count(project, show_internal),
+                        export_project_visible_count(project, show_internal),
+                    ));
+                });
+            });
+            ui.add_space(7.0);
+
+            for session in &mut project.sessions {
+                if !export_session_visible(session, show_internal) {
+                    continue;
+                }
+
+                ui.horizontal(|ui| {
+                    ui.add_space(28.0);
+                    let mut selected = session.selected;
+                    if bool_control(ui, &mut selected, "").changed() {
+                        session.selected = selected;
+                    }
+
+                    ui.vertical(|ui| {
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(if session.source.thread.title.is_empty() {
+                                    &session.source.thread.id
+                                } else {
+                                    &session.source.thread.title
+                                })
+                                .size(13.0)
+                                .strong()
+                                .color(TEXT),
+                            )
+                            .truncate(),
+                        );
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(
+                                RichText::new(format_date(session.source.thread.updated_at))
+                                    .size(11.0)
+                                    .color(MUTED),
+                            );
+                            if session.source.thread.archived {
+                                ui.label(
+                                    RichText::new(tr(zh, "已归档", "Archived"))
+                                        .size(11.0)
+                                        .color(MUTED),
+                                );
+                            }
+                            if session.source.thread.is_internal_or_subagent() {
+                                ui.label(
+                                    RichText::new(tr(zh, "内部/子代理", "Internal/Subagent"))
+                                        .size(11.0)
+                                        .color(WARNING),
+                                );
+                            }
+                        });
+                    });
+
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let response = ui.add_enabled(
+                            !busy,
+                            egui::Button::new(tr(zh, "预览", "Preview")).small(),
+                        );
+                        if response.clicked() {
+                            preview = Some(session.source.clone());
+                        }
+                    });
+                });
+                ui.add_space(4.0);
+            }
+        });
+    preview
+}
+
 fn session_selection_card(ui: &mut egui::Ui, project: &mut UiProject, zh: bool) {
     egui::Frame::new()
         .fill(SURFACE)
@@ -2649,6 +2936,166 @@ fn session_selection_card(ui: &mut egui::Ui, project: &mut UiProject, zh: bool) 
                 });
             }
         });
+}
+
+fn session_preview_window(context: &egui::Context, preview: &SessionPreview, zh: bool) -> bool {
+    let mut open = true;
+    let mut close_clicked = false;
+    let title = if preview.session.thread.title.is_empty() {
+        preview.session.thread.id.clone()
+    } else {
+        preview.session.thread.title.clone()
+    };
+
+    egui::Window::new(format!(
+        "{} - {}",
+        tr(zh, "会话完整预览", "Full session preview"),
+        title
+    ))
+    .open(&mut open)
+    .resizable(true)
+    .collapsible(false)
+    .default_width(900.0)
+    .default_height(680.0)
+    .show(context, |ui| {
+        ui.set_min_width(720.0);
+
+        egui::Frame::new()
+            .fill(Color32::from_rgb(248, 249, 246))
+            .stroke(Stroke::new(1.0_f32, BORDER))
+            .corner_radius(9.0)
+            .inner_margin(Margin::symmetric(14, 10))
+            .show(ui, |ui| {
+                ui.label(RichText::new(&title).size(16.0).strong().color(TEXT));
+                ui.add_space(4.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        RichText::new(format!("ID: {}", preview.session.thread.id))
+                            .size(11.0)
+                            .monospace()
+                            .color(MUTED),
+                    );
+                    ui.separator();
+                    ui.label(
+                        RichText::new(format!(
+                            "{}: {}",
+                            tr(zh, "项目", "Project"),
+                            preview.session.thread.cwd
+                        ))
+                        .size(11.0)
+                        .color(MUTED),
+                    );
+                    ui.separator();
+                    ui.label(
+                        RichText::new(format!(
+                            "{}: {}",
+                            tr(zh, "来源", "Source"),
+                            preview.session.thread.source
+                        ))
+                        .size(11.0)
+                        .color(MUTED),
+                    );
+                });
+                ui.label(
+                    RichText::new(&preview.session.source_path)
+                        .size(11.0)
+                        .monospace()
+                        .color(MUTED),
+                );
+            });
+
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(format!(
+                    "{} {}",
+                    preview.messages.len(),
+                    tr(zh, "条消息", "messages")
+                ))
+                .size(12.0)
+                .color(MUTED),
+            );
+            if preview.session.thread.is_internal_or_subagent() {
+                ui.label(
+                    RichText::new(tr(zh, "内部/子代理会话", "Internal/subagent session"))
+                        .size(12.0)
+                        .strong()
+                        .color(WARNING),
+                );
+            }
+        });
+
+        ui.add_space(6.0);
+        egui::ScrollArea::vertical()
+            .id_salt(("session_preview_messages", &preview.session.thread.id))
+            .max_height(520.0)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                if preview.messages.is_empty() {
+                    ui.label(
+                        RichText::new(tr(
+                            zh,
+                            "未解析到可展示的 user / assistant / tool 消息。",
+                            "No displayable user / assistant / tool messages were parsed.",
+                        ))
+                        .color(MUTED),
+                    );
+                }
+
+                for message in &preview.messages {
+                    let role = message.role.to_ascii_lowercase();
+                    let role_label = match role.as_str() {
+                        "user" => tr(zh, "用户", "User"),
+                        "assistant" => "AI",
+                        "tool" => tr(zh, "工具", "Tool"),
+                        "system" => tr(zh, "系统", "System"),
+                        _ => &message.role,
+                    };
+                    let fill = match role.as_str() {
+                        "user" => Color32::from_rgb(244, 249, 247),
+                        "assistant" => Color32::from_rgb(246, 248, 252),
+                        _ => Color32::from_rgb(248, 248, 246),
+                    };
+                    egui::Frame::new()
+                        .fill(fill)
+                        .stroke(Stroke::new(1.0_f32, BORDER))
+                        .corner_radius(8.0)
+                        .inner_margin(Margin::symmetric(12, 9))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(role_label).size(12.0).strong().color(TEXT));
+                                if let Some(timestamp) = message.timestamp {
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        ui.label(
+                                            RichText::new(format_datetime(timestamp))
+                                                .size(11.0)
+                                                .color(MUTED),
+                                        );
+                                    });
+                                }
+                            });
+                            ui.add_space(4.0);
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(&message.content).size(13.0).color(TEXT),
+                                )
+                                .wrap(),
+                            );
+                        });
+                    ui.add_space(8.0);
+                }
+            });
+
+        ui.add_space(10.0);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if primary_action(ui, tr(zh, "关闭", "Close"), true).clicked() {
+                close_clicked = true;
+            }
+        });
+    });
+
+    !open || close_clicked
 }
 
 fn tr<'a>(chinese: bool, chinese_text: &'a str, english_text: &'a str) -> &'a str {
@@ -3454,6 +3901,12 @@ fn action_color(action: &MergeAction) -> Color32 {
     }
 }
 
+fn format_datetime(timestamp: i64) -> String {
+    chrono::DateTime::from_timestamp(timestamp, 0)
+        .map(|value| value.format("%Y-%m-%d %H:%M:%S").to_string())
+        .unwrap_or_else(|| "Unknown / 日期未知".to_owned())
+}
+
 fn format_date(timestamp: i64) -> String {
     chrono::DateTime::from_timestamp(timestamp, 0)
         .map(|value| value.format("%Y-%m-%d").to_string())
@@ -3601,6 +4054,36 @@ mod tests {
             sessions: vec![session("one")],
         };
         assert!(project_has_path_problem(&project));
+    }
+
+    #[test]
+    fn export_selection_hides_internal_sessions_by_default() {
+        let mut user = session("user");
+        user.selected = false;
+        let mut guardian = session("guardian");
+        guardian.selected = false;
+        guardian.source.thread.source = r#"{"subagent":{"other":"guardian"}}"#.to_owned();
+        guardian.source.thread.thread_source = Some("subagent".to_owned());
+
+        let mut projects = vec![UiProject {
+            original_cwd: "/project".to_owned(),
+            target_path: String::new(),
+            history_only: false,
+            expanded: true,
+            sessions: vec![user, guardian],
+        }];
+
+        assert_eq!(internal_session_count(&projects), 1);
+        assert_eq!(export_project_visible_count(&projects[0], false), 1);
+        set_export_projects_selected(&mut projects, false, true);
+        let selected = selected_export_ids(&projects, false);
+        assert_eq!(selected.len(), 1);
+        assert!(selected.contains("user"));
+        assert!(!selected.contains("guardian"));
+
+        set_export_projects_selected(&mut projects, true, true);
+        let selected_with_internal = selected_export_ids(&projects, true);
+        assert_eq!(selected_with_internal.len(), 2);
     }
 
     #[test]

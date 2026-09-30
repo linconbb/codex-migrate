@@ -34,6 +34,40 @@ pub struct ThreadRecord {
     pub reasoning_effort: Option<String>,
 }
 
+impl ThreadRecord {
+    pub fn is_internal_or_subagent(&self) -> bool {
+        if self
+            .thread_source
+            .as_deref()
+            .map(|value| matches!(value.to_ascii_lowercase().as_str(), "subagent" | "internal"))
+            .unwrap_or(false)
+        {
+            return true;
+        }
+
+        let source = self.source.trim();
+        if matches!(
+            source.to_ascii_lowercase().as_str(),
+            "subagent" | "internal"
+        ) {
+            return true;
+        }
+
+        serde_json::from_str::<serde_json::Value>(source)
+            .ok()
+            .and_then(|value| value.as_object().cloned())
+            .map(|object| object.contains_key("subagent") || object.contains_key("internal"))
+            .unwrap_or(false)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionMessage {
+    pub role: String,
+    pub content: String,
+    pub timestamp: Option<i64>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ScannedThread {
     pub record: ThreadRecord,
@@ -133,4 +167,48 @@ pub struct DiagnosticReport {
     pub database_threads: usize,
     pub integrity: Option<String>,
     pub issues: Vec<String>,
+}
+
+#[cfg(test)]
+mod thread_record_tests {
+    use super::*;
+
+    fn record(source: &str, thread_source: Option<&str>) -> ThreadRecord {
+        ThreadRecord {
+            id: "id".to_owned(),
+            title: String::new(),
+            created_at: 0,
+            updated_at: 0,
+            cwd: String::new(),
+            source: source.to_owned(),
+            thread_source: thread_source.map(str::to_owned),
+            model_provider: "openai".to_owned(),
+            cli_version: String::new(),
+            archived: false,
+            archive_path: String::new(),
+            sha256: String::new(),
+            byte_len: 0,
+            first_user_message: String::new(),
+            sandbox_policy: None,
+            approval_mode: None,
+            model: None,
+            reasoning_effort: None,
+        }
+    }
+
+    #[test]
+    fn identifies_guardian_and_other_subagent_threads() {
+        assert!(
+            record(r#"{"subagent":{"other":"guardian"}}"#, Some("subagent"))
+                .is_internal_or_subagent()
+        );
+        assert!(record(r#"{"subagent":{"thread_spawn":"worker"}}"#, None).is_internal_or_subagent());
+        assert!(record(r#"{"internal":"guardian"}"#, None).is_internal_or_subagent());
+    }
+
+    #[test]
+    fn keeps_user_threads_visible() {
+        assert!(!record("vscode", Some("user")).is_internal_or_subagent());
+        assert!(!record("cli", None).is_internal_or_subagent());
+    }
 }
