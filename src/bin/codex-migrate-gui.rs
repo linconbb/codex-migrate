@@ -1737,36 +1737,88 @@ impl MigrationApp {
 
         if !self.export_projects.is_empty() {
             ui.add_space(12.0);
-            let state = projects_selection_state(&self.export_projects);
-            ui.horizontal(|ui| {
+            let state = export_projects_selection_state(
+                &self.export_projects,
+                self.show_internal_export_sessions,
+            );
+            let internal_count = internal_session_count(&self.export_projects);
+            ui.horizontal_wrapped(|ui| {
                 if selection_control(ui, state, tr(zh, "全部选择", "Select all")).clicked() {
-                    set_projects_selected(&mut self.export_projects, state != CheckState::All);
+                    set_export_projects_selected(
+                        &mut self.export_projects,
+                        self.show_internal_export_sessions,
+                        state != CheckState::All,
+                    );
                 }
+
+                if internal_count > 0 {
+                    let response = ui.checkbox(
+                        &mut self.show_internal_export_sessions,
+                        format!(
+                            "{} ({internal_count})",
+                            tr(
+                                zh,
+                                "显示内部/子代理会话",
+                                "Show internal/subagent sessions",
+                            )
+                        ),
+                    );
+                    if response.changed() && !self.show_internal_export_sessions {
+                        set_internal_sessions_selected(&mut self.export_projects, false);
+                    }
+                }
+
                 ui.label(
                     RichText::new(tr(
                         zh,
-                        "选择性备份仅包含所选会话的 rollout 文件，不复制全局数据库、日志和配置。",
-                        "Selective backup contains only the selected session rollout files, not global databases, logs, or configuration.",
+                        "默认隐藏 Guardian 等内部子代理；点击“预览”可在导出前查看完整会话。",
+                        "Guardian and other internal subagents are hidden by default; use Preview to inspect the full transcript before exporting.",
                     ))
                     .size(12.0)
                     .color(MUTED),
                 );
             });
             ui.add_space(8.0);
+
+            let mut preview_request = None;
             egui::ScrollArea::vertical()
                 .id_salt("backup_session_list")
-                .max_height(360.0)
+                .max_height(430.0)
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     for project in &mut self.export_projects {
-                        session_selection_card(ui, project, zh);
+                        if export_project_visible_count(
+                            project,
+                            self.show_internal_export_sessions,
+                        ) == 0
+                        {
+                            continue;
+                        }
+                        if let Some(session) = export_session_selection_card(
+                            ui,
+                            project,
+                            zh,
+                            self.show_internal_export_sessions,
+                            self.busy,
+                        ) {
+                            preview_request = Some(session);
+                        }
                         ui.add_space(8.0);
                     }
                 });
+
+            if let Some(session) = preview_request {
+                self.load_session_preview(session);
+            }
+
             ui.add_space(8.0);
             card(ui, |ui| {
-                let selected = selected_ids(&self.export_projects).len();
+                let selected = selected_export_ids(
+                    &self.export_projects,
+                    self.show_internal_export_sessions,
+                )
+                .len();
                 ui.horizontal(|ui| {
                     ui.label(format!(
                         "{} {}",
