@@ -1,3 +1,11 @@
+## 1.0.9 - 2026-10-01
+
+- Added importable selective Codex backups: scan local projects/sessions and export only selected conversations while preserving `sessions/` and `archived_sessions/` layout.
+- Added CLI support for repeated `export --thread <THREAD_ID>` selection.
+- Kept full backup behavior unchanged.
+- Updated GUI numeric stroke literals for Rust 1.98 Clippy compatibility.
+- Linux x64 GitHub Actions builds now publish/update a dedicated release automatically when source or Cargo metadata changes.
+
 # Changelog
 
 All notable changes to this project will be documented here.
