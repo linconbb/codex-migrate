@@ -4080,6 +4080,36 @@ mod tests {
     }
 
     #[test]
+    fn export_selection_hides_internal_sessions_by_default() {
+        let mut user = session("user");
+        user.selected = false;
+        let mut guardian = session("guardian");
+        guardian.selected = false;
+        guardian.source.thread.source = r#"{"subagent":{"other":"guardian"}}"#.to_owned();
+        guardian.source.thread.thread_source = Some("subagent".to_owned());
+
+        let mut projects = vec![UiProject {
+            original_cwd: "/project".to_owned(),
+            target_path: String::new(),
+            history_only: false,
+            expanded: true,
+            sessions: vec![user, guardian],
+        }];
+
+        assert_eq!(internal_session_count(&projects), 1);
+        assert_eq!(export_project_visible_count(&projects[0], false), 1);
+        set_export_projects_selected(&mut projects, false, true);
+        let selected = selected_export_ids(&projects, false);
+        assert_eq!(selected.len(), 1);
+        assert!(selected.contains("user"));
+        assert!(!selected.contains("guardian"));
+
+        set_export_projects_selected(&mut projects, true, true);
+        let selected_with_internal = selected_export_ids(&projects, true);
+        assert_eq!(selected_with_internal.len(), 2);
+    }
+
+    #[test]
     fn html_selection_defaults_to_none_and_supports_select_all() {
         let mut projects = vec![UiProject {
             original_cwd: "/project".to_owned(),
