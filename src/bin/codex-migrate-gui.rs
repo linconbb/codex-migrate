@@ -2559,6 +2559,97 @@ fn selected_ids(projects: &[UiProject]) -> BTreeSet<String> {
         .collect()
 }
 
+fn export_session_visible(session: &UiSession, show_internal: bool) -> bool {
+    show_internal || !session.source.thread.is_internal_or_subagent()
+}
+
+fn selected_export_ids(projects: &[UiProject], show_internal: bool) -> BTreeSet<String> {
+    projects
+        .iter()
+        .flat_map(|project| project.sessions.iter())
+        .filter(|session| session.selected && export_session_visible(session, show_internal))
+        .map(|session| session.source.thread.id.clone())
+        .collect()
+}
+
+fn export_project_visible_count(project: &UiProject, show_internal: bool) -> usize {
+    project
+        .sessions
+        .iter()
+        .filter(|session| export_session_visible(session, show_internal))
+        .count()
+}
+
+fn export_project_selected_count(project: &UiProject, show_internal: bool) -> usize {
+    project
+        .sessions
+        .iter()
+        .filter(|session| session.selected && export_session_visible(session, show_internal))
+        .count()
+}
+
+fn export_project_selection_state(project: &UiProject, show_internal: bool) -> CheckState {
+    let selected = export_project_selected_count(project, show_internal);
+    let total = export_project_visible_count(project, show_internal);
+    match selected {
+        0 => CheckState::None,
+        value if value == total && total > 0 => CheckState::All,
+        _ => CheckState::Partial,
+    }
+}
+
+fn export_projects_selection_state(projects: &[UiProject], show_internal: bool) -> CheckState {
+    let selected = projects
+        .iter()
+        .map(|project| export_project_selected_count(project, show_internal))
+        .sum::<usize>();
+    let total = projects
+        .iter()
+        .map(|project| export_project_visible_count(project, show_internal))
+        .sum::<usize>();
+    match selected {
+        0 => CheckState::None,
+        value if value == total && total > 0 => CheckState::All,
+        _ => CheckState::Partial,
+    }
+}
+
+fn set_export_project_selected(project: &mut UiProject, show_internal: bool, selected: bool) {
+    for session in &mut project.sessions {
+        if export_session_visible(session, show_internal) {
+            session.selected = selected;
+        }
+    }
+}
+
+fn set_export_projects_selected(
+    projects: &mut [UiProject],
+    show_internal: bool,
+    selected: bool,
+) {
+    for project in projects {
+        set_export_project_selected(project, show_internal, selected);
+    }
+}
+
+fn set_internal_sessions_selected(projects: &mut [UiProject], selected: bool) {
+    for project in projects {
+        for session in &mut project.sessions {
+            if session.source.thread.is_internal_or_subagent() {
+                session.selected = selected;
+            }
+        }
+    }
+}
+
+fn internal_session_count(projects: &[UiProject]) -> usize {
+    projects
+        .iter()
+        .flat_map(|project| project.sessions.iter())
+        .filter(|session| session.source.thread.is_internal_or_subagent())
+        .count()
+}
+
 fn projects_selection_state(projects: &[UiProject]) -> CheckState {
     let selected = projects
         .iter()
@@ -2701,6 +2792,110 @@ fn repair_project_row(ui: &mut egui::Ui, project: &mut UiProject, zh: bool) {
                 });
             });
         });
+}
+
+fn export_session_selection_card(
+    ui: &mut egui::Ui,
+    project: &mut UiProject,
+    zh: bool,
+    show_internal: bool,
+    busy: bool,
+) -> Option<SourceSession> {
+    let mut preview = None;
+    egui::Frame::new()
+        .fill(SURFACE)
+        .stroke(Stroke::new(1.0_f32, BORDER))
+        .corner_radius(9.0)
+        .inner_margin(Margin::symmetric(14, 11))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                let state = export_project_selection_state(project, show_internal);
+                if selection_control(ui, state, "").clicked() {
+                    set_export_project_selected(project, show_internal, state != CheckState::All);
+                }
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(&project.original_cwd)
+                            .size(14.0)
+                            .strong()
+                            .color(TEXT),
+                    )
+                    .truncate(),
+                );
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(format!(
+                        "{} / {}",
+                        export_project_selected_count(project, show_internal),
+                        export_project_visible_count(project, show_internal),
+                    ));
+                });
+            });
+            ui.add_space(7.0);
+
+            for session in &mut project.sessions {
+                if !export_session_visible(session, show_internal) {
+                    continue;
+                }
+
+                ui.horizontal(|ui| {
+                    ui.add_space(28.0);
+                    let mut selected = session.selected;
+                    if bool_control(ui, &mut selected, "").changed() {
+                        session.selected = selected;
+                    }
+
+                    ui.vertical(|ui| {
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(if session.source.thread.title.is_empty() {
+                                    &session.source.thread.id
+                                } else {
+                                    &session.source.thread.title
+                                })
+                                .size(13.0)
+                                .strong()
+                                .color(TEXT),
+                            )
+                            .truncate(),
+                        );
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(
+                                RichText::new(format_date(session.source.thread.updated_at))
+                                    .size(11.0)
+                                    .color(MUTED),
+                            );
+                            if session.source.thread.archived {
+                                ui.label(
+                                    RichText::new(tr(zh, "已归档", "Archived"))
+                                        .size(11.0)
+                                        .color(MUTED),
+                                );
+                            }
+                            if session.source.thread.is_internal_or_subagent() {
+                                ui.label(
+                                    RichText::new(tr(zh, "内部/子代理", "Internal/Subagent"))
+                                        .size(11.0)
+                                        .color(WARNING),
+                                );
+                            }
+                        });
+                    });
+
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let response = ui.add_enabled(
+                            !busy,
+                            egui::Button::new(tr(zh, "预览", "Preview")).small(),
+                        );
+                        if response.clicked() {
+                            preview = Some(session.source.clone());
+                        }
+                    });
+                });
+                ui.add_space(4.0);
+            }
+        });
+    preview
 }
 
 fn session_selection_card(ui: &mut egui::Ui, project: &mut UiProject, zh: bool) {
