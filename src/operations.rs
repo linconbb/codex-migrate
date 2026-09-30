@@ -5,7 +5,7 @@ use crate::html_export::{self, HtmlExportSummary};
 use crate::merge;
 use crate::model::{
     DiagnosticReport, ImportOptions, ImportPlan, MergeAction, PlatformKind, ScannedThread,
-    SourceCatalog, SourceProject, SourceSession,
+    SessionMessage, SourceCatalog, SourceProject, SourceSession,
 };
 use crate::path_mapper::{map_explicit, normalize};
 use crate::rollout;
@@ -108,6 +108,10 @@ pub fn rebind_existing(
         options,
         progress,
     )
+}
+
+pub fn load_session_messages(path: &Path) -> Result<Vec<SessionMessage>> {
+    scanner::load_session_messages(path)
 }
 
 pub fn export_html(
