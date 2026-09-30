@@ -120,5 +120,5 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "$TITLE" \
-              --notes "Fork release built from commit \`$GITHUB_SHA\`. Includes Linux x64 and Windows x64 GUI/CLI builds. v1.0.9 adds importable selective session backup export."
+              --notes "Fork release built from commit \`$GITHUB_SHA\`. Includes Linux x64 and Windows x64 GUI/CLI builds. See CHANGELOG.md for release changes."
           fi

@@ -1,3 +1,11 @@
+## 1.0.10 - 2026-10-01
+
+- Added full on-demand session transcript preview before selective export, showing user, assistant, and tool messages with metadata.
+- Guardian and other internal/subagent sessions are hidden from selective export by default, with an advanced toggle to reveal them.
+- Preserved structured Codex session `source` metadata so subagent sessions such as `{"subagent":{"other":"guardian"}}` are classified correctly.
+- Improved fallback session titles by ignoring injected `AGENTS.md` / `<environment_context>` blocks and extracting the real VS Code "My request for Codex" prompt.
+- Added cross-platform regression tests for internal-session filtering, title extraction, and transcript parsing.
+
 ## 1.0.9 - 2026-10-01
 
 - Added importable selective Codex backups: scan local projects/sessions and export only selected conversations while preserving `sessions/` and `archived_sessions/` layout.
