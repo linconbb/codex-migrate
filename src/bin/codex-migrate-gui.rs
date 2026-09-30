@@ -1008,7 +1008,7 @@ impl MigrationApp {
             .frame(
                 egui::Frame::new()
                     .fill(SURFACE)
-                    .stroke(Stroke::new(1.0, BORDER))
+                    .stroke(Stroke::new(1.0_f32, BORDER))
                     .inner_margin(Margin::symmetric(24, 13)),
             )
             .show(context, |ui| {
@@ -1297,7 +1297,7 @@ impl MigrationApp {
         let total = project.sessions.len();
         egui::Frame::new()
             .fill(SURFACE)
-            .stroke(Stroke::new(1.0, BORDER))
+            .stroke(Stroke::new(1.0_f32, BORDER))
             .corner_radius(9.0)
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
@@ -1527,7 +1527,7 @@ impl MigrationApp {
                     for (mapped_cwd, threads) in projects {
                         egui::Frame::new()
                             .fill(SURFACE)
-                            .stroke(Stroke::new(1.0, BORDER))
+                            .stroke(Stroke::new(1.0_f32, BORDER))
                             .corner_radius(10.0)
                             .show(ui, |ui| {
                                 egui::Frame::new()
@@ -2559,7 +2559,7 @@ fn project_has_path_problem(project: &UiProject) -> bool {
 fn repair_project_row(ui: &mut egui::Ui, project: &mut UiProject, zh: bool) {
     egui::Frame::new()
         .fill(SURFACE)
-        .stroke(Stroke::new(1.0, BORDER))
+        .stroke(Stroke::new(1.0_f32, BORDER))
         .corner_radius(9.0)
         .inner_margin(Margin::symmetric(14, 11))
         .show(ui, |ui| {
@@ -2604,7 +2604,7 @@ fn repair_project_row(ui: &mut egui::Ui, project: &mut UiProject, zh: bool) {
 fn session_selection_card(ui: &mut egui::Ui, project: &mut UiProject, zh: bool) {
     egui::Frame::new()
         .fill(SURFACE)
-        .stroke(Stroke::new(1.0, BORDER))
+        .stroke(Stroke::new(1.0_f32, BORDER))
         .corner_radius(9.0)
         .inner_margin(Margin::symmetric(14, 11))
         .show(ui, |ui| {
@@ -2729,7 +2729,7 @@ fn step(ui: &mut egui::Ui, number: &str, label: &str, completed: bool, active: b
     let color = if completed || active { ACCENT } else { MUTED };
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::hover());
     ui.painter()
-        .circle_stroke(rect.center(), 8.0, Stroke::new(1.5, color));
+        .circle_stroke(rect.center(), 8.0, Stroke::new(1.5_f32, color));
     if completed {
         paint_line_icon(ui.painter(), rect.shrink(4.0), LineIcon::Check, color);
     } else {
@@ -2751,14 +2751,14 @@ fn line(ui: &mut egui::Ui, active: bool) {
             painter.clip_rect().left_center(),
             painter.clip_rect().right_center(),
         ],
-        Stroke::new(1.0, if active { ACCENT } else { BORDER }),
+        Stroke::new(1.0_f32, if active { ACCENT } else { BORDER }),
     );
 }
 
 fn card(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::new()
         .fill(SURFACE)
-        .stroke(Stroke::new(1.0, BORDER))
+        .stroke(Stroke::new(1.0_f32, BORDER))
         .corner_radius(10.0)
         .inner_margin(20.0)
         .show(ui, |ui| {
@@ -2865,7 +2865,7 @@ fn check_icon(ui: &mut egui::Ui, state: CheckState) {
     ui.painter().rect_stroke(
         box_rect,
         3.5,
-        Stroke::new(1.4, if active { ACCENT } else { MUTED }),
+        Stroke::new(1.4_f32, if active { ACCENT } else { MUTED }),
         StrokeKind::Inside,
     );
     match state {
@@ -2876,7 +2876,7 @@ fn check_icon(ui: &mut egui::Ui, state: CheckState) {
                     Pos2::new(box_rect.left() + 3.5, box_rect.center().y),
                     Pos2::new(box_rect.right() - 3.5, box_rect.center().y),
                 ],
-                Stroke::new(1.7, Color32::WHITE),
+                Stroke::new(1.7_f32, Color32::WHITE),
             );
         }
         CheckState::All => {
@@ -2927,7 +2927,7 @@ fn secondary_button(ui: &mut egui::Ui, icon: Option<LineIcon>, label: &str) -> e
         rect,
         7.0,
         fill,
-        Stroke::new(1.0, BORDER),
+        Stroke::new(1.0_f32, BORDER),
         StrokeKind::Inside,
     );
     let mut text_x = rect.center().x - galley.size().x / 2.0;
@@ -2964,7 +2964,7 @@ fn status_message(ui: &mut egui::Ui, icon: LineIcon, color: Color32, text: &str)
 }
 
 fn paint_line_icon(painter: &egui::Painter, rect: Rect, icon: LineIcon, color: Color32) {
-    let stroke = Stroke::new(1.5, color);
+    let stroke = Stroke::new(1.5_f32, color);
     let x = |value: f32| rect.left() + rect.width() * value;
     let y = |value: f32| rect.top() + rect.height() * value;
     let point = |x_value: f32, y_value: f32| Pos2::new(x(x_value), y(y_value));
@@ -3073,7 +3073,7 @@ fn paint_line_icon(painter: &egui::Painter, rect: Rect, icon: LineIcon, color: C
 fn sticky_action_bar(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::new()
         .fill(SURFACE)
-        .stroke(Stroke::new(1.0, BORDER))
+        .stroke(Stroke::new(1.0_f32, BORDER))
         .corner_radius(10.0)
         .inner_margin(Margin::symmetric(16, 12))
         .show(ui, |ui| {
@@ -3133,7 +3133,7 @@ fn filled_action(
 fn summary_metric(ui: &mut egui::Ui, label: &str, value: usize) {
     egui::Frame::new()
         .fill(SURFACE)
-        .stroke(Stroke::new(1.0, BORDER))
+        .stroke(Stroke::new(1.0_f32, BORDER))
         .corner_radius(9.0)
         .inner_margin(Margin::symmetric(18, 12))
         .show(ui, |ui| {
@@ -3167,7 +3167,7 @@ fn confirmation(
         .frame(
             egui::Frame::new()
                 .fill(SURFACE)
-                .stroke(Stroke::new(1.0, BORDER))
+                .stroke(Stroke::new(1.0_f32, BORDER))
                 .corner_radius(14.0)
                 .inner_margin(Margin::symmetric(24, 22)),
         )
@@ -3265,7 +3265,7 @@ fn import_success_modal(
         .frame(
             egui::Frame::new()
                 .fill(SURFACE)
-                .stroke(Stroke::new(1.0, BORDER))
+                .stroke(Stroke::new(1.0_f32, BORDER))
                 .corner_radius(14.0)
                 .inner_margin(Margin::symmetric(24, 22)),
         )
@@ -3359,7 +3359,7 @@ fn completion_notice_modal(
         .frame(
             egui::Frame::new()
                 .fill(SURFACE)
-                .stroke(Stroke::new(1.0, BORDER))
+                .stroke(Stroke::new(1.0_f32, BORDER))
                 .corner_radius(14.0)
                 .inner_margin(Margin::symmetric(24, 22)),
         )
