@@ -1,0 +1,77 @@
+name: Build Linux GUI
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/linux-build.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  linux-x64:
+    name: Linux x86_64 GUI
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux GUI build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libx11-dev \
+            libx11-xcb-dev \
+            libxkbcommon-dev \
+            libwayland-dev \
+            libxrandr-dev \
+            libxi-dev \
+            libxcursor-dev \
+            libxinerama-dev \
+            libgl1-mesa-dev \
+            libegl1-mesa-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: linux-x64-gui
+
+      - name: Build release binaries
+        run: |
+          cargo build \
+            --release \
+            --locked \
+            --features gui \
+            --bins \
+            --target x86_64-unknown-linux-gnu
+
+      - name: Package
+        run: |
+          set -euxo pipefail
+          mkdir -p package
+          cp target/x86_64-unknown-linux-gnu/release/codex-migrate package/
+          cp target/x86_64-unknown-linux-gnu/release/codex-migrate-gui package/
+          cp LICENSE package/
+          tar -C package -czf Codex-Migrate-Linux-x64.tar.gz .
+          sha256sum Codex-Migrate-Linux-x64.tar.gz > Codex-Migrate-Linux-x64.tar.gz.sha256
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Codex-Migrate-Linux-x64
+          path: |
+            Codex-Migrate-Linux-x64.tar.gz
+            Codex-Migrate-Linux-x64.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 30
