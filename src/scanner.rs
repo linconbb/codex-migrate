@@ -316,8 +316,8 @@ const VSCODE_CONTEXT_PREFIX: &str = "# Context from my IDE setup:";
 const CODEX_REQUEST_MARKER: &str = "my request for codex";
 
 pub fn load_session_messages(path: &Path) -> Result<Vec<SessionMessage>> {
-    let file = fs::File::open(path)
-        .with_context(|| format!("open session preview {}", path.display()))?;
+    let file =
+        fs::File::open(path).with_context(|| format!("open session preview {}", path.display()))?;
     let reader = BufReader::new(file);
     let mut messages = Vec::new();
 
@@ -442,7 +442,10 @@ fn extract_content_item(item: &Value) -> Option<String> {
         return Some(format!("[Tool: {name}]"));
     }
     if item_type == "tool_result" {
-        let content = item.get("content").map(extract_content_text).unwrap_or_default();
+        let content = item
+            .get("content")
+            .map(extract_content_text)
+            .unwrap_or_default();
         return (!content.trim().is_empty()).then_some(content);
     }
     for key in ["text", "input_text", "output_text"] {
@@ -450,7 +453,10 @@ fn extract_content_item(item: &Value) -> Option<String> {
             return Some(text.to_owned());
         }
     }
-    let nested = item.get("content").map(extract_content_text).unwrap_or_default();
+    let nested = item
+        .get("content")
+        .map(extract_content_text)
+        .unwrap_or_default();
     (!nested.trim().is_empty()).then_some(nested)
 }
 
@@ -635,5 +641,4 @@ mod tests {
         assert_eq!(messages[2].role, "tool");
         assert_eq!(messages[2].content, "/tmp/project");
     }
-
 }
