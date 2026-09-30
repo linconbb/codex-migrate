@@ -173,6 +173,7 @@ enum TaskResult {
     Scan(Result<SourceCatalog, String>),
     RepairScan(Result<SourceCatalog, String>),
     HtmlScan(Result<SourceCatalog, String>),
+    ExportScan(Result<SourceCatalog, String>),
     Plan(Result<ImportPlan, String>),
     Import(Result<ImportSummary, String>),
     Rebind(Result<ImportSummary, String>),
@@ -196,6 +197,7 @@ struct MigrationApp {
     projects: Vec<UiProject>,
     repair_projects: Vec<UiProject>,
     html_projects: Vec<UiProject>,
+    export_projects: Vec<UiProject>,
     html_export_folder: String,
     show_all_repair_projects: bool,
     parent_source: String,
@@ -250,6 +252,7 @@ impl MigrationApp {
             projects: Vec::new(),
             repair_projects: Vec::new(),
             html_projects: Vec::new(),
+            export_projects: Vec::new(),
             html_export_folder: String::new(),
             show_all_repair_projects: false,
             parent_source: String::new(),
@@ -376,6 +379,19 @@ impl MigrationApp {
                         self.repair_projects.len(),
                         tr(zh, "个项目", "projects"),
                         catalog.thread_count
+                    );
+                }
+                Err(error) => self.fail(error),
+            },
+            TaskResult::ExportScan(result) => match result {
+                Ok(catalog) => {
+                    self.export_projects = catalog.projects.iter().map(project_to_ui).collect();
+                    set_projects_selected(&mut self.export_projects, false);
+                    self.status = format!(
+                        "{} {} {}",
+                        tr(zh, "已读取", "Loaded"),
+                        catalog.thread_count,
+                        tr(zh, "个本机会话", "local sessions")
                     );
                 }
                 Err(error) => self.fail(error),
@@ -651,6 +667,35 @@ impl MigrationApp {
         self.start_task(move |sender| {
             let result = operations::scan_local(target.as_deref()).map_err(display_error);
             let _ = sender.send(TaskEvent::Complete(Box::new(TaskResult::HtmlScan(result))));
+        });
+    }
+
+    fn scan_export(&mut self) {
+        let source = PathBuf::from(self.export_source.trim());
+        self.start_task(move |sender| {
+            let result = operations::scan_source(&source).map_err(display_error);
+            let _ = sender.send(TaskEvent::Complete(Box::new(TaskResult::ExportScan(
+                result,
+            ))));
+        });
+    }
+
+    fn export_selected_backup(&mut self) {
+        let source = PathBuf::from(self.export_source.trim());
+        let parent = PathBuf::from(self.export_parent.trim());
+        let selected = selected_ids(&self.export_projects);
+        self.start_task(move |sender| {
+            let progress_sender = sender.clone();
+            let result = operations::export_selected_directory(
+                &source,
+                &parent,
+                &selected,
+                move |message| {
+                    let _ = progress_sender.send(TaskEvent::Progress(message));
+                },
+            )
+            .map_err(display_error);
+            let _ = sender.send(TaskEvent::Complete(Box::new(TaskResult::Export(result))));
         });
     }
 
@@ -963,7 +1008,7 @@ impl MigrationApp {
             .frame(
                 egui::Frame::new()
                     .fill(SURFACE)
-                    .stroke(Stroke::new(1.0, BORDER))
+                    .stroke(Stroke::new(1.0_f32, BORDER))
                     .inner_margin(Margin::symmetric(24, 13)),
             )
             .show(context, |ui| {
@@ -1252,7 +1297,7 @@ impl MigrationApp {
         let total = project.sessions.len();
         egui::Frame::new()
             .fill(SURFACE)
-            .stroke(Stroke::new(1.0, BORDER))
+            .stroke(Stroke::new(1.0_f32, BORDER))
             .corner_radius(9.0)
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
@@ -1482,7 +1527,7 @@ impl MigrationApp {
                     for (mapped_cwd, threads) in projects {
                         egui::Frame::new()
                             .fill(SURFACE)
-                            .stroke(Stroke::new(1.0, BORDER))
+                            .stroke(Stroke::new(1.0_f32, BORDER))
                             .corner_radius(10.0)
                             .show(ui, |ui| {
                                 egui::Frame::new()
@@ -1593,11 +1638,11 @@ impl MigrationApp {
         let zh = self.chinese();
         page_title(
             ui,
-            tr(zh, "导出完整 Codex 备份", "Export full Codex backup"),
+            tr(zh, "导出 Codex 备份", "Export Codex backup"),
             tr(
                 zh,
-                "将本机 .codex 文件夹的全部内容复制到所选位置，保留数据库、会话和配置。",
-                "Copy the complete local .codex folder, including databases, sessions, and settings.",
+                "可导出完整 .codex，也可以只导出选中的会话；选择性备份仍可用于后续迁移导入。",
+                "Export the complete .codex folder or only selected sessions; selective backups remain importable for migration.",
             ),
         );
         card(ui, |ui| {
@@ -1614,36 +1659,101 @@ impl MigrationApp {
                 &mut self.export_parent,
                 tr(zh, "选择位置", "Choose location"),
             );
-            ui.add_space(14.0);
+            ui.add_space(12.0);
             ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(tr(
-                        zh,
-                        "将创建：所选目录/Codex_backup/",
-                        "Creates: selected folder/Codex_backup/",
-                    ))
-                    .small()
-                    .color(MUTED),
-                );
+                if secondary_button(
+                    ui,
+                    None,
+                    tr(zh, "读取并选择会话", "Load sessions to select"),
+                )
+                .clicked()
+                {
+                    self.scan_export();
+                }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if primary_action(ui, tr(zh, "导出备份", "Export backup"), !self.busy).clicked()
+                    if primary_action(ui, tr(zh, "导出完整备份", "Export full backup"), !self.busy)
+                        .clicked()
                     {
                         self.export();
                     }
                 });
             });
-            ui.add_space(12.0);
-            status_message(
-                ui,
-                LineIcon::Warning,
-                WARNING,
-                tr(
+            ui.add_space(10.0);
+            ui.label(
+                RichText::new(tr(
                     zh,
-                    "登录凭据不会导出，但备份仍包含私密对话、配置和日志；请勿公开分享，导出前请关闭 Codex。",
-                    "Login credentials are excluded, but the backup still contains private conversations, settings, and logs. Do not share it publicly, and quit Codex before exporting.",
-                ),
+                    "完整备份会复制数据库、会话、Skills、配置、插件、日志和缓存（登录凭据除外）。",
+                    "A full backup copies databases, sessions, Skills, configuration, plugins, logs, and caches (excluding login credentials).",
+                ))
+                .small()
+                .color(MUTED),
             );
         });
+
+        if !self.export_projects.is_empty() {
+            ui.add_space(12.0);
+            let state = projects_selection_state(&self.export_projects);
+            ui.horizontal(|ui| {
+                if selection_control(ui, state, tr(zh, "全部选择", "Select all")).clicked() {
+                    set_projects_selected(&mut self.export_projects, state != CheckState::All);
+                }
+                ui.label(
+                    RichText::new(tr(
+                        zh,
+                        "选择性备份仅包含所选会话的 rollout 文件，不复制全局数据库、日志和配置。",
+                        "Selective backup contains only the selected session rollout files, not global databases, logs, or configuration.",
+                    ))
+                    .size(12.0)
+                    .color(MUTED),
+                );
+            });
+            ui.add_space(8.0);
+            egui::ScrollArea::vertical()
+                .id_salt("backup_session_list")
+                .max_height(360.0)
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    for project in &mut self.export_projects {
+                        session_selection_card(ui, project, zh);
+                        ui.add_space(8.0);
+                    }
+                });
+            ui.add_space(8.0);
+            card(ui, |ui| {
+                let selected = selected_ids(&self.export_projects).len();
+                ui.horizontal(|ui| {
+                    ui.label(format!(
+                        "{} {}",
+                        selected,
+                        tr(zh, "个会话已选择", "sessions selected")
+                    ));
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if primary_action(
+                            ui,
+                            tr(zh, "导出所选会话备份", "Export selected backup"),
+                            selected > 0 && !self.busy,
+                        )
+                        .clicked()
+                        {
+                            self.export_selected_backup();
+                        }
+                    });
+                });
+            });
+        }
+
+        ui.add_space(12.0);
+        status_message(
+            ui,
+            LineIcon::Warning,
+            WARNING,
+            tr(
+                zh,
+                "导出前请关闭 Codex。选择性备份用于迁移会话历史，不包含全局配置；实际项目工作区文件仍需单独复制。",
+                "Quit Codex before exporting. Selective backup migrates session history but not global configuration; copy the actual project workspace separately.",
+            ),
+        );
     }
 
     fn repair_page(&mut self, ui: &mut egui::Ui) {
@@ -2449,7 +2559,7 @@ fn project_has_path_problem(project: &UiProject) -> bool {
 fn repair_project_row(ui: &mut egui::Ui, project: &mut UiProject, zh: bool) {
     egui::Frame::new()
         .fill(SURFACE)
-        .stroke(Stroke::new(1.0, BORDER))
+        .stroke(Stroke::new(1.0_f32, BORDER))
         .corner_radius(9.0)
         .inner_margin(Margin::symmetric(14, 11))
         .show(ui, |ui| {
@@ -2494,7 +2604,7 @@ fn repair_project_row(ui: &mut egui::Ui, project: &mut UiProject, zh: bool) {
 fn session_selection_card(ui: &mut egui::Ui, project: &mut UiProject, zh: bool) {
     egui::Frame::new()
         .fill(SURFACE)
-        .stroke(Stroke::new(1.0, BORDER))
+        .stroke(Stroke::new(1.0_f32, BORDER))
         .corner_radius(9.0)
         .inner_margin(Margin::symmetric(14, 11))
         .show(ui, |ui| {
@@ -2619,7 +2729,7 @@ fn step(ui: &mut egui::Ui, number: &str, label: &str, completed: bool, active: b
     let color = if completed || active { ACCENT } else { MUTED };
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::hover());
     ui.painter()
-        .circle_stroke(rect.center(), 8.0, Stroke::new(1.5, color));
+        .circle_stroke(rect.center(), 8.0, Stroke::new(1.5_f32, color));
     if completed {
         paint_line_icon(ui.painter(), rect.shrink(4.0), LineIcon::Check, color);
     } else {
@@ -2641,14 +2751,14 @@ fn line(ui: &mut egui::Ui, active: bool) {
             painter.clip_rect().left_center(),
             painter.clip_rect().right_center(),
         ],
-        Stroke::new(1.0, if active { ACCENT } else { BORDER }),
+        Stroke::new(1.0_f32, if active { ACCENT } else { BORDER }),
     );
 }
 
 fn card(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::new()
         .fill(SURFACE)
-        .stroke(Stroke::new(1.0, BORDER))
+        .stroke(Stroke::new(1.0_f32, BORDER))
         .corner_radius(10.0)
         .inner_margin(20.0)
         .show(ui, |ui| {
@@ -2755,7 +2865,7 @@ fn check_icon(ui: &mut egui::Ui, state: CheckState) {
     ui.painter().rect_stroke(
         box_rect,
         3.5,
-        Stroke::new(1.4, if active { ACCENT } else { MUTED }),
+        Stroke::new(1.4_f32, if active { ACCENT } else { MUTED }),
         StrokeKind::Inside,
     );
     match state {
@@ -2766,7 +2876,7 @@ fn check_icon(ui: &mut egui::Ui, state: CheckState) {
                     Pos2::new(box_rect.left() + 3.5, box_rect.center().y),
                     Pos2::new(box_rect.right() - 3.5, box_rect.center().y),
                 ],
-                Stroke::new(1.7, Color32::WHITE),
+                Stroke::new(1.7_f32, Color32::WHITE),
             );
         }
         CheckState::All => {
@@ -2817,7 +2927,7 @@ fn secondary_button(ui: &mut egui::Ui, icon: Option<LineIcon>, label: &str) -> e
         rect,
         7.0,
         fill,
-        Stroke::new(1.0, BORDER),
+        Stroke::new(1.0_f32, BORDER),
         StrokeKind::Inside,
     );
     let mut text_x = rect.center().x - galley.size().x / 2.0;
@@ -2854,7 +2964,7 @@ fn status_message(ui: &mut egui::Ui, icon: LineIcon, color: Color32, text: &str)
 }
 
 fn paint_line_icon(painter: &egui::Painter, rect: Rect, icon: LineIcon, color: Color32) {
-    let stroke = Stroke::new(1.5, color);
+    let stroke = Stroke::new(1.5_f32, color);
     let x = |value: f32| rect.left() + rect.width() * value;
     let y = |value: f32| rect.top() + rect.height() * value;
     let point = |x_value: f32, y_value: f32| Pos2::new(x(x_value), y(y_value));
@@ -2963,7 +3073,7 @@ fn paint_line_icon(painter: &egui::Painter, rect: Rect, icon: LineIcon, color: C
 fn sticky_action_bar(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::new()
         .fill(SURFACE)
-        .stroke(Stroke::new(1.0, BORDER))
+        .stroke(Stroke::new(1.0_f32, BORDER))
         .corner_radius(10.0)
         .inner_margin(Margin::symmetric(16, 12))
         .show(ui, |ui| {
@@ -3023,7 +3133,7 @@ fn filled_action(
 fn summary_metric(ui: &mut egui::Ui, label: &str, value: usize) {
     egui::Frame::new()
         .fill(SURFACE)
-        .stroke(Stroke::new(1.0, BORDER))
+        .stroke(Stroke::new(1.0_f32, BORDER))
         .corner_radius(9.0)
         .inner_margin(Margin::symmetric(18, 12))
         .show(ui, |ui| {
@@ -3057,7 +3167,7 @@ fn confirmation(
         .frame(
             egui::Frame::new()
                 .fill(SURFACE)
-                .stroke(Stroke::new(1.0, BORDER))
+                .stroke(Stroke::new(1.0_f32, BORDER))
                 .corner_radius(14.0)
                 .inner_margin(Margin::symmetric(24, 22)),
         )
@@ -3155,7 +3265,7 @@ fn import_success_modal(
         .frame(
             egui::Frame::new()
                 .fill(SURFACE)
-                .stroke(Stroke::new(1.0, BORDER))
+                .stroke(Stroke::new(1.0_f32, BORDER))
                 .corner_radius(14.0)
                 .inner_margin(Margin::symmetric(24, 22)),
         )
@@ -3249,7 +3359,7 @@ fn completion_notice_modal(
         .frame(
             egui::Frame::new()
                 .fill(SURFACE)
-                .stroke(Stroke::new(1.0, BORDER))
+                .stroke(Stroke::new(1.0_f32, BORDER))
                 .corner_radius(14.0)
                 .inner_margin(Margin::symmetric(24, 22)),
         )

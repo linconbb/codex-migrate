@@ -36,6 +36,8 @@ struct ExportArgs {
     source: PathBuf,
     #[arg(long)]
     output_parent: PathBuf,
+    #[arg(long = "thread")]
+    threads: Vec<String>,
 }
 
 #[derive(Debug, Args)]
@@ -101,9 +103,19 @@ pub fn run(cli: Cli) -> Result<()> {
             }
         }
         Commands::Export(args) => {
-            let summary = operations::export_directory(&args.source, &args.output_parent, |_| {})?;
+            let selected = args.threads.into_iter().collect::<BTreeSet<_>>();
+            let summary = if selected.is_empty() {
+                operations::export_directory(&args.source, &args.output_parent, |_| {})?
+            } else {
+                operations::export_selected_directory(
+                    &args.source,
+                    &args.output_parent,
+                    &selected,
+                    |_| {},
+                )?
+            };
             println!(
-                "backed up the complete Codex directory with {} session file(s) to {}; skipped {} symbolic link(s)",
+                "backed up {} session file(s) to {}; skipped {} symbolic link(s)",
                 summary.thread_count, summary.output, summary.skipped_symlink_count
             );
         }

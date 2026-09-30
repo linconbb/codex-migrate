@@ -17,7 +17,7 @@ use crate::validator;
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
@@ -193,6 +193,147 @@ pub fn export_directory(
         output: output.to_string_lossy().into_owned(),
         thread_count,
         skipped_symlink_count,
+    })
+}
+
+pub fn export_selected_directory(
+    source: &Path,
+    output_parent: &Path,
+    selected_ids: &BTreeSet<String>,
+    mut progress: impl FnMut(String),
+) -> Result<ExportSummary> {
+    if selected_ids.is_empty() {
+        return Err(anyhow!("select at least one session to export"));
+    }
+
+    let source_root = resolve_codex_root(source)?;
+    discovery::ensure_codex_stopped(&source_root)?;
+    fs::create_dir_all(output_parent).with_context(|| {
+        format!(
+            "failed to create backup parent directory {}",
+            output_parent.display()
+        )
+    })?;
+
+    let source_canonical = source_root
+        .canonicalize()
+        .with_context(|| format!("failed to resolve source {}", source_root.display()))?;
+    let output_parent_canonical = output_parent.canonicalize().with_context(|| {
+        format!(
+            "failed to resolve backup parent {}",
+            output_parent.display()
+        )
+    })?;
+    if output_parent_canonical.starts_with(&source_canonical) {
+        return Err(anyhow!(
+            "backup destination {} cannot be inside source {}",
+            output_parent.display(),
+            source_root.display()
+        ));
+    }
+
+    let state_db = discovery::find_state_db(&source_root)?;
+    let threads = scanner::scan_codex_home(&source_root, state_db.as_deref())?;
+    let available_ids = threads
+        .iter()
+        .map(|thread| thread.record.id.clone())
+        .collect::<BTreeSet<_>>();
+    let missing = selected_ids
+        .difference(&available_ids)
+        .cloned()
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return Err(anyhow!(
+            "{} selected session(s) were not found in the source: {}",
+            missing.len(),
+            missing.join(", ")
+        ));
+    }
+
+    let output = output_parent.join("Codex_backup");
+    if output.exists() {
+        return Err(anyhow!(
+            "{} already exists; choose another parent folder or remove the existing backup",
+            output.display()
+        ));
+    }
+
+    let staging = output_parent.join(format!(
+        ".Codex_backup.exporting-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    fs::create_dir_all(&staging).with_context(|| {
+        format!(
+            "failed to create backup staging directory {}",
+            staging.display()
+        )
+    })?;
+
+    let export_result = (|| -> Result<usize> {
+        let mut copied = 0usize;
+        for thread in threads
+            .iter()
+            .filter(|thread| selected_ids.contains(&thread.record.id))
+        {
+            let relative = PathBuf::from(&thread.record.archive_path);
+            if !(relative.starts_with("sessions") || relative.starts_with("archived_sessions")) {
+                return Err(anyhow!(
+                    "session {} has an invalid archive path: {}",
+                    thread.record.id,
+                    thread.record.archive_path
+                ));
+            }
+            let destination = staging.join(&relative);
+            if let Some(parent) = destination.parent() {
+                fs::create_dir_all(parent).with_context(|| {
+                    format!("failed to create backup directory {}", parent.display())
+                })?;
+            }
+            fs::copy(&thread.source_path, &destination).with_context(|| {
+                format!(
+                    "failed to copy {} to {}",
+                    thread.source_path.display(),
+                    destination.display()
+                )
+            })?;
+            copied += 1;
+            progress(format!(
+                "Copied session {} ({}/{})",
+                thread.record.id,
+                copied,
+                selected_ids.len()
+            ));
+        }
+        Ok(copied)
+    })();
+
+    let copied = match export_result {
+        Ok(copied) => copied,
+        Err(error) => {
+            let _ = fs::remove_dir_all(&staging);
+            return Err(error);
+        }
+    };
+
+    if let Err(error) = fs::rename(&staging, &output) {
+        let _ = fs::remove_dir_all(&staging);
+        return Err(error).with_context(|| {
+            format!(
+                "failed to finalize backup by renaming {} to {}",
+                staging.display(),
+                output.display()
+            )
+        });
+    }
+
+    progress(format!(
+        "Created selective backup with {copied} session(s) at {}",
+        output.display()
+    ));
+    Ok(ExportSummary {
+        output: output.to_string_lossy().into_owned(),
+        thread_count: copied,
+        skipped_symlink_count: 0,
     })
 }
 
