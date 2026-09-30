@@ -2948,6 +2948,179 @@ fn session_selection_card(ui: &mut egui::Ui, project: &mut UiProject, zh: bool) 
         });
 }
 
+fn session_preview_window(
+    context: &egui::Context,
+    preview: &SessionPreview,
+    zh: bool,
+) -> bool {
+    let mut open = true;
+    let mut close_clicked = false;
+    let title = if preview.session.thread.title.is_empty() {
+        preview.session.thread.id.clone()
+    } else {
+        preview.session.thread.title.clone()
+    };
+
+    egui::Window::new(format!(
+        "{} - {}",
+        tr(zh, "会话完整预览", "Full session preview"),
+        title
+    ))
+    .open(&mut open)
+    .resizable(true)
+    .collapsible(false)
+    .default_width(900.0)
+    .default_height(680.0)
+    .show(context, |ui| {
+        ui.set_min_width(720.0);
+
+        egui::Frame::new()
+            .fill(Color32::from_rgb(248, 249, 246))
+            .stroke(Stroke::new(1.0_f32, BORDER))
+            .corner_radius(9.0)
+            .inner_margin(Margin::symmetric(14, 10))
+            .show(ui, |ui| {
+                ui.label(RichText::new(&title).size(16.0).strong().color(TEXT));
+                ui.add_space(4.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        RichText::new(format!("ID: {}", preview.session.thread.id))
+                            .size(11.0)
+                            .monospace()
+                            .color(MUTED),
+                    );
+                    ui.separator();
+                    ui.label(
+                        RichText::new(format!(
+                            "{}: {}",
+                            tr(zh, "项目", "Project"),
+                            preview.session.thread.cwd
+                        ))
+                        .size(11.0)
+                        .color(MUTED),
+                    );
+                    ui.separator();
+                    ui.label(
+                        RichText::new(format!(
+                            "{}: {}",
+                            tr(zh, "来源", "Source"),
+                            preview.session.thread.source
+                        ))
+                        .size(11.0)
+                        .color(MUTED),
+                    );
+                });
+                ui.label(
+                    RichText::new(&preview.session.source_path)
+                        .size(11.0)
+                        .monospace()
+                        .color(MUTED),
+                );
+            });
+
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(format!(
+                    "{} {}",
+                    preview.messages.len(),
+                    tr(zh, "条消息", "messages")
+                ))
+                .size(12.0)
+                .color(MUTED),
+            );
+            if preview.session.thread.is_internal_or_subagent() {
+                ui.label(
+                    RichText::new(tr(
+                        zh,
+                        "内部/子代理会话",
+                        "Internal/subagent session",
+                    ))
+                    .size(12.0)
+                    .strong()
+                    .color(WARNING),
+                );
+            }
+        });
+
+        ui.add_space(6.0);
+        egui::ScrollArea::vertical()
+            .id_salt(("session_preview_messages", &preview.session.thread.id))
+            .max_height(520.0)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                if preview.messages.is_empty() {
+                    ui.label(
+                        RichText::new(tr(
+                            zh,
+                            "未解析到可展示的 user / assistant / tool 消息。",
+                            "No displayable user / assistant / tool messages were parsed.",
+                        ))
+                        .color(MUTED),
+                    );
+                }
+
+                for message in &preview.messages {
+                    let role = message.role.to_ascii_lowercase();
+                    let role_label = match role.as_str() {
+                        "user" => tr(zh, "用户", "User"),
+                        "assistant" => "AI",
+                        "tool" => tr(zh, "工具", "Tool"),
+                        "system" => tr(zh, "系统", "System"),
+                        _ => &message.role,
+                    };
+                    let fill = match role.as_str() {
+                        "user" => Color32::from_rgb(244, 249, 247),
+                        "assistant" => Color32::from_rgb(246, 248, 252),
+                        _ => Color32::from_rgb(248, 248, 246),
+                    };
+                    egui::Frame::new()
+                        .fill(fill)
+                        .stroke(Stroke::new(1.0_f32, BORDER))
+                        .corner_radius(8.0)
+                        .inner_margin(Margin::symmetric(12, 9))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    RichText::new(role_label)
+                                        .size(12.0)
+                                        .strong()
+                                        .color(TEXT),
+                                );
+                                if let Some(timestamp) = message.timestamp {
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        ui.label(
+                                            RichText::new(format_datetime(timestamp))
+                                                .size(11.0)
+                                                .color(MUTED),
+                                        );
+                                    });
+                                }
+                            });
+                            ui.add_space(4.0);
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(&message.content).size(13.0).color(TEXT),
+                                )
+                                .wrap(),
+                            );
+                        });
+                    ui.add_space(8.0);
+                }
+            });
+
+        ui.add_space(10.0);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if primary_action(ui, tr(zh, "关闭", "Close"), true).clicked() {
+                close_clicked = true;
+            }
+        });
+    });
+
+    !open || close_clicked
+}
+
 fn tr<'a>(chinese: bool, chinese_text: &'a str, english_text: &'a str) -> &'a str {
     if chinese {
         chinese_text
@@ -3749,6 +3922,12 @@ fn action_color(action: &MergeAction) -> Color32 {
         MergeAction::SkipIdentical | MergeAction::KeepTargetLonger => MUTED,
         MergeAction::Conflict => Color32::from_rgb(180, 64, 58),
     }
+}
+
+fn format_datetime(timestamp: i64) -> String {
+    chrono::DateTime::from_timestamp(timestamp, 0)
+        .map(|value| value.format("%Y-%m-%d %H:%M:%S").to_string())
+        .unwrap_or_else(|| "Unknown / 日期未知".to_owned())
 }
 
 fn format_date(timestamp: i64) -> String {
